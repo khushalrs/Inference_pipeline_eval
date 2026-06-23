@@ -35,3 +35,14 @@ def to_tensor(img_bgr: np.ndarray, device: str = 'cuda') -> torch.Tensor:
     img_chw = np.ascontiguousarray(img_rgb.transpose(2, 0, 1))
     tensor  = torch.from_numpy(img_chw).float().div_(255.0)
     return tensor.unsqueeze(0).to(device)
+
+
+def to_numpy_input(img_bgr: np.ndarray) -> np.ndarray:
+    """Convert a BGR HxWxC uint8 numpy array to a normalised float32 1xCxHxW numpy array.
+
+    Used for ONNX Runtime inference, which expects numpy arrays rather than torch tensors.
+    Preprocessing is identical to to_tensor() so PyTorch and ORT results are comparable.
+    """
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    img_chw = np.ascontiguousarray(img_rgb.transpose(2, 0, 1)).astype(np.float32) / 255.0
+    return np.expand_dims(img_chw, axis=0)

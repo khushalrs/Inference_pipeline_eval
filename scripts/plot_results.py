@@ -35,7 +35,6 @@ import sys
 import matplotlib
 matplotlib.use('Agg')   # non-interactive backend for Colab / headless
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import pandas as pd
 import numpy as np
 
