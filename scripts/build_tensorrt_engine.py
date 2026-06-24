@@ -75,7 +75,12 @@ def build_engine(onnx_path: str, engine_path: str, fp16: bool, workspace_gb: int
             if fp16:
                 if _TRT_MAJOR < 10 and not builder.platform_has_fast_fp16:
                     print('[WARNING] GPU does not report native FP16 — speed gain may be limited')
-                config.set_flag(trt.BuilderFlag.FP16)
+                fp16_flag = getattr(trt.BuilderFlag, 'FP16', None)
+                if fp16_flag is not None:
+                    config.set_flag(fp16_flag)
+                else:
+                    print('[INFO] TRT 11+: BuilderFlag.FP16 removed; '
+                          'TRT will auto-use FP16 Tensor Cores on supported hardware.')
 
             with open(onnx_path, 'rb') as f:
                 if not parser.parse(f.read()):
