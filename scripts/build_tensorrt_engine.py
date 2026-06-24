@@ -73,7 +73,7 @@ def build_engine(onnx_path: str, engine_path: str, fp16: bool, workspace_gb: int
             )
 
             if fp16:
-                if not builder.platform_has_fast_fp16:
+                if _TRT_MAJOR < 10 and not builder.platform_has_fast_fp16:
                     print('[WARNING] GPU does not report native FP16 — speed gain may be limited')
                 config.set_flag(trt.BuilderFlag.FP16)
 
