@@ -1,15 +1,69 @@
 import cv2
 import torch
-from ultralytics.utils.ops import non_max_suppression
+import torchvision
+
+
+def _xywh2xyxy(boxes: torch.Tensor) -> torch.Tensor:
+    """Convert (cx, cy, w, h) → (x1, y1, x2, y2)."""
+    xy = boxes[:, :2]
+    wh = boxes[:, 2:]
+    return torch.cat([xy - wh / 2, xy + wh / 2], dim=1)
 
 
 def run_nms(
     raw_preds,
     conf_thres: float = 0.25,
     iou_thres:  float = 0.45,
+    max_det:    int   = 300,
 ):
-    """Wrap ultralytics NMS. Returns a list of (N, 6) tensors — one per batch item."""
-    return non_max_suppression(raw_preds, conf_thres=conf_thres, iou_thres=iou_thres)
+    """NMS for YOLO11n raw predictions using torchvision.ops.batched_nms.
+
+    Args:
+        raw_preds:  (batch, 4+nc, num_anchors) tensor from model forward pass.
+                    Boxes are in (cx, cy, w, h) pixel-space; class scores are sigmoid-activated.
+        conf_thres: minimum class confidence to keep a box.
+        iou_thres:  IoU suppression threshold.
+        max_det:    maximum detections returned per image.
+
+    Returns:
+        List of (N, 6) tensors [x1, y1, x2, y2, conf, cls], one per batch item.
+    """
+    if raw_preds.ndim == 3:
+        batch = [raw_preds[i] for i in range(raw_preds.shape[0])]
+    else:
+        batch = [raw_preds]
+
+    results = []
+    for pred in batch:
+        # pred: (4+nc, num_anchors) → (num_anchors, 4+nc)
+        pred         = pred.T
+        boxes_xywh   = pred[:, :4]
+        class_scores = pred[:, 4:]
+
+        conf, cls = class_scores.max(dim=1)
+
+        keep_mask = conf >= conf_thres
+        if keep_mask.sum() == 0:
+            results.append(torch.zeros((0, 6), device=raw_preds.device))
+            continue
+
+        boxes_xywh = boxes_xywh[keep_mask]
+        conf       = conf[keep_mask]
+        cls        = cls[keep_mask]
+
+        boxes_xyxy = _xywh2xyxy(boxes_xywh)
+
+        keep = torchvision.ops.batched_nms(
+            boxes_xyxy.float(), conf.float(), cls, iou_thres
+        )[:max_det]
+
+        det = torch.cat(
+            [boxes_xyxy[keep], conf[keep].unsqueeze(1), cls[keep].float().unsqueeze(1)],
+            dim=1,
+        )
+        results.append(det)
+
+    return results
 
 
 def scale_boxes(
