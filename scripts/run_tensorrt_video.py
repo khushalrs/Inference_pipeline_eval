@@ -1,6 +1,6 @@
 """Phase 4: TensorRT inference pipeline on driving video.
 
-Identical 5-stage timing structure to run_pytorch_video.py and run_onnx_video.py.
+Identical 4-stage timing structure to run_pytorch_video.py and run_onnx_video.py.
 Use this script for both FP32 and FP16 engines by changing --engine.
 
 The TRTRunner uses PyTorch CUDA tensors as GPU memory — no pycuda needed.
@@ -10,17 +10,15 @@ PyTorch CUDA stream and is flushed by torch.cuda.synchronize().
 Usage:
     # FP32
     python3 scripts/run_tensorrt_video.py \
-        --video        data/clip.mp4 \
-        --engine       models/yolo11n_fp32.engine \
-        --output-video results/trt_fp32_output.mp4 \
-        --results      results/trt_fp32_raw_timings.csv
+        --video   data/clip.mp4 \
+        --engine  models/yolo11n_fp32.engine \
+        --results results/trt_fp32_raw_timings.csv
 
     # FP16
     python3 scripts/run_tensorrt_video.py \
-        --video        data/clip.mp4 \
-        --engine       models/yolo11n_fp16.engine \
-        --output-video results/trt_fp16_output.mp4 \
-        --results      results/trt_fp16_raw_timings.csv
+        --video   data/clip.mp4 \
+        --engine  models/yolo11n_fp16.engine \
+        --results results/trt_fp16_raw_timings.csv
 """
 
 import argparse
@@ -34,9 +32,9 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.timing import CUDATimer
-from src.video_io import VideoReader, VideoWriter
+from src.video_io import VideoReader
 from src.preprocessing import letterbox, to_numpy_input
-from src.postprocessing import run_nms, scale_boxes, draw_detections
+from src.postprocessing import run_nms, scale_boxes
 from src.metrics import compute_stats, fps_from_mean_ms
 from src.trt_runner import TRTRunner
 
@@ -46,9 +44,6 @@ def parse_args():
     p.add_argument('--video',        default='data/clip.mp4')
     p.add_argument('--engine',       required=True,
                    help='Path to .engine file (from build_tensorrt_engine.py)')
-    p.add_argument('--pt-model',     default='yolo11n.pt',
-                   help='YOLO weights — only used to load class names')
-    p.add_argument('--output-video', default='results/trt_output.mp4')
     p.add_argument('--results',      default='results/trt_raw_timings.csv')
     p.add_argument('--input-size',   type=int,   default=640)
     p.add_argument('--conf',         type=float, default=0.25)
@@ -72,8 +67,7 @@ def main():
 
     input_shape = (args.input_size, args.input_size)
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_video)), exist_ok=True)
-    os.makedirs(os.path.dirname(os.path.abspath(args.results)),      exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(args.results)), exist_ok=True)
 
     # ── TRT runner ───────────────────────────────────────────────────────────
     print(f'Loading engine : {args.engine}')
@@ -82,9 +76,6 @@ def main():
     print(f'Input  shape   : {runner.input_shape}')
     print(f'Output shape   : {runner.output_shape}')
     print(f'Output dtype   : {runner._out_buf.dtype}')  # float32 or float16
-
-    from ultralytics import YOLO
-    class_names = YOLO(args.pt_model).names
 
     # ── Warmup ───────────────────────────────────────────────────────────────
     print(f'\nWarming up ({args.warmup} iterations) ...')
@@ -97,14 +88,12 @@ def main():
     # ── Inference loop ───────────────────────────────────────────────────────
     reader = VideoReader(args.video)
     print(f'Video   : {args.video}')
-    print(f'Frames  : {reader.frame_count}  |  {reader.width}x{reader.height}  |  {reader.fps:.1f} FPS')
-    print(f'Output  : {args.output_video}\n')
+    print(f'Frames  : {reader.frame_count}  |  {reader.width}x{reader.height}  |  {reader.fps:.1f} FPS\n')
 
-    FIELDS = ['frame', 'read_ms', 'preprocess_ms', 'inference_ms',
-              'postprocess_ms', 'draw_write_ms', 'total_ms']
+    FIELDS = ['frame', 'read_ms', 'preprocess_ms', 'inference_ms', 'postprocess_ms', 'total_ms']
     rows = []
 
-    with reader, VideoWriter(args.output_video, reader.fps, reader.width, reader.height) as writer:
+    with reader:
         frame_idx = 0
         while True:
 
@@ -135,13 +124,8 @@ def main():
                         pad=pad,
                     )
 
-            # Stage 5: draw detections + write to output video
-            with CUDATimer() as t_draw:
-                annotated = draw_detections(frame.copy(), det, class_names)
-                writer.write(annotated)
-
             total_ms = (t_read.elapsed_ms + t_pre.elapsed_ms +
-                        t_inf.elapsed_ms   + t_post.elapsed_ms + t_draw.elapsed_ms)
+                        t_inf.elapsed_ms   + t_post.elapsed_ms)
 
             rows.append({
                 'frame':          frame_idx,
@@ -149,7 +133,6 @@ def main():
                 'preprocess_ms':  round(t_pre.elapsed_ms,   3),
                 'inference_ms':   round(t_inf.elapsed_ms,   3),
                 'postprocess_ms': round(t_post.elapsed_ms,  3),
-                'draw_write_ms':  round(t_draw.elapsed_ms,  3),
                 'total_ms':       round(total_ms,            3),
             })
 
@@ -177,7 +160,6 @@ def main():
     print(f'End-to-end FPS   : {fps_from_mean_ms(stats["mean_ms"]):.1f}')
     print(f'{"─"*50}')
     print(f'Timings saved    : {args.results}')
-    print(f'Output video     : {args.output_video}')
 
 
 if __name__ == '__main__':

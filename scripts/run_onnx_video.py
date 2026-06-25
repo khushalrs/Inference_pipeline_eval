@@ -1,6 +1,6 @@
 """Phase 3: ONNX Runtime inference pipeline on driving video.
 
-Mirrors run_pytorch_video.py exactly — same 5 timed stages, same output CSV
+Mirrors run_pytorch_video.py exactly — same 4 timed stages, same output CSV
 schema — so Phase 2 benchmark.py and plot_results.py work unchanged.
 
 The only difference from the PyTorch script is the inference stage:
@@ -13,10 +13,8 @@ Usage:
     python3 scripts/run_onnx_video.py \
         --video      data/clip.mp4 \
         --onnx-model models/yolo11n.onnx \
-        --pt-model   yolo11n.pt \
-        --output-video results/onnx_output.mp4 \
-        --results      results/onnx_raw_timings.csv \
-        --device       cuda
+        --results    results/onnx_raw_timings.csv \
+        --device     cuda
 """
 
 import argparse
@@ -30,9 +28,9 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.timing import CUDATimer
-from src.video_io import VideoReader, VideoWriter
+from src.video_io import VideoReader
 from src.preprocessing import letterbox, to_numpy_input
-from src.postprocessing import run_nms, scale_boxes, draw_detections
+from src.postprocessing import run_nms, scale_boxes
 from src.metrics import compute_stats, fps_from_mean_ms
 
 
@@ -41,9 +39,6 @@ def parse_args():
     p.add_argument('--video',        default='data/clip.mp4')
     p.add_argument('--onnx-model',   default='models/yolo11n.onnx',
                    help='Path to exported ONNX model')
-    p.add_argument('--pt-model',     default='yolo11n.pt',
-                   help='Original PyTorch weights — used only to retrieve class names')
-    p.add_argument('--output-video', default='results/onnx_output.mp4')
     p.add_argument('--results',      default='results/onnx_raw_timings.csv')
     p.add_argument('--input-size',   type=int,   default=640)
     p.add_argument('--conf',         type=float, default=0.25)
@@ -73,8 +68,7 @@ def main():
 
     input_shape = (args.input_size, args.input_size)
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_video)), exist_ok=True)
-    os.makedirs(os.path.dirname(os.path.abspath(args.results)),      exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(args.results)), exist_ok=True)
 
     # ── ORT session ──────────────────────────────────────────────────────────
     if not os.path.exists(args.onnx_model):
@@ -85,10 +79,6 @@ def main():
     print(f'Loading ONNX model: {args.onnx_model}')
     session    = build_ort_session(args.onnx_model, device)
     input_name = session.get_inputs()[0].name
-
-    # Class names come from the original PyTorch weights
-    from ultralytics import YOLO
-    class_names = YOLO(args.pt_model).names
 
     if device == 'cuda':
         print(f'GPU : {torch.cuda.get_device_name(0)}')
@@ -104,14 +94,12 @@ def main():
     # ── Inference loop ───────────────────────────────────────────────────────
     reader = VideoReader(args.video)
     print(f'\nVideo      : {args.video}')
-    print(f'Resolution : {reader.width}x{reader.height}  |  FPS: {reader.fps:.1f}  |  Frames: {reader.frame_count}')
-    print(f'Output     : {args.output_video}\n')
+    print(f'Resolution : {reader.width}x{reader.height}  |  FPS: {reader.fps:.1f}  |  Frames: {reader.frame_count}\n')
 
-    FIELDS = ['frame', 'read_ms', 'preprocess_ms', 'inference_ms',
-              'postprocess_ms', 'draw_write_ms', 'total_ms']
+    FIELDS = ['frame', 'read_ms', 'preprocess_ms', 'inference_ms', 'postprocess_ms', 'total_ms']
     rows = []
 
-    with reader, VideoWriter(args.output_video, reader.fps, reader.width, reader.height) as writer:
+    with reader:
         frame_idx = 0
         while True:
 
@@ -144,13 +132,8 @@ def main():
                         pad=pad,
                     )
 
-            # Stage 5: draw + write
-            with CUDATimer() as t_draw:
-                annotated = draw_detections(frame.copy(), det, class_names)
-                writer.write(annotated)
-
             total_ms = (t_read.elapsed_ms + t_pre.elapsed_ms +
-                        t_inf.elapsed_ms   + t_post.elapsed_ms + t_draw.elapsed_ms)
+                        t_inf.elapsed_ms   + t_post.elapsed_ms)
 
             rows.append({
                 'frame':          frame_idx,
@@ -158,7 +141,6 @@ def main():
                 'preprocess_ms':  round(t_pre.elapsed_ms,   3),
                 'inference_ms':   round(t_inf.elapsed_ms,   3),
                 'postprocess_ms': round(t_post.elapsed_ms,  3),
-                'draw_write_ms':  round(t_draw.elapsed_ms,  3),
                 'total_ms':       round(total_ms,            3),
             })
 
@@ -187,7 +169,6 @@ def main():
     print(f'End-to-end FPS   : {fps_from_mean_ms(stats["mean_ms"]):.1f}')
     print(f'{"─"*50}')
     print(f'Timings saved    : {args.results}')
-    print(f'Output video     : {args.output_video}')
 
 
 if __name__ == '__main__':

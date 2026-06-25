@@ -1,12 +1,11 @@
 """Phase 1 + 2: PyTorch baseline inference pipeline.
 
 Records per-frame latency for each pipeline stage:
-  read → preprocess → inference → postprocess (NMS + box scale) → draw + write
+  read → preprocess → inference → postprocess (NMS + box scale)
 
 Usage:
     python3 scripts/run_pytorch_video.py \
         --video data/clip.mp4 \
-        --output-video results/pytorch_output.mp4 \
         --results results/pytorch_raw_timings.csv
 """
 
@@ -20,9 +19,9 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.timing import CUDATimer
-from src.video_io import VideoReader, VideoWriter
+from src.video_io import VideoReader
 from src.preprocessing import letterbox, to_tensor
-from src.postprocessing import run_nms, scale_boxes, draw_detections
+from src.postprocessing import run_nms, scale_boxes
 from src.metrics import compute_stats, fps_from_mean_ms
 
 
@@ -30,8 +29,6 @@ def parse_args():
     p = argparse.ArgumentParser(description='Phase 1: PyTorch baseline inference')
     p.add_argument('--video',        default='data/clip.mp4',
                    help='Input video path')
-    p.add_argument('--output-video', default='results/pytorch_output.mp4',
-                   help='Annotated output video path')
     p.add_argument('--results',      default='results/pytorch_raw_timings.csv',
                    help='Per-frame timing CSV')
     p.add_argument('--model',        default='yolo11n.pt',
@@ -58,16 +55,14 @@ def main():
 
     input_shape = (args.input_size, args.input_size)
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.output_video)), exist_ok=True)
-    os.makedirs(os.path.dirname(os.path.abspath(args.results)),      exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(args.results)), exist_ok=True)
 
     # ── Model ────────────────────────────────────────────────────────────────
     print(f'Device      : {device}')
     print(f'Loading     : {args.model}')
     from ultralytics import YOLO
-    yolo        = YOLO(args.model)
-    model       = yolo.model.to(device).eval()
-    class_names = yolo.names   # {0: 'person', 1: 'bicycle', ...}
+    yolo  = YOLO(args.model)
+    model = yolo.model.to(device).eval()
 
     if device == 'cuda':
         print(f'GPU         : {torch.cuda.get_device_name(0)}')
@@ -85,14 +80,12 @@ def main():
     # ── Inference loop ───────────────────────────────────────────────────────
     reader = VideoReader(args.video)
     print(f'\nVideo       : {args.video}')
-    print(f'Resolution  : {reader.width}x{reader.height}  |  FPS: {reader.fps:.1f}  |  Frames: {reader.frame_count}')
-    print(f'Output video: {args.output_video}\n')
+    print(f'Resolution  : {reader.width}x{reader.height}  |  FPS: {reader.fps:.1f}  |  Frames: {reader.frame_count}\n')
 
-    FIELDS = ['frame', 'read_ms', 'preprocess_ms', 'inference_ms',
-              'postprocess_ms', 'draw_write_ms', 'total_ms']
+    FIELDS = ['frame', 'read_ms', 'preprocess_ms', 'inference_ms', 'postprocess_ms', 'total_ms']
     rows = []
 
-    with reader, VideoWriter(args.output_video, reader.fps, reader.width, reader.height) as writer:
+    with reader:
         frame_idx = 0
         while True:
 
@@ -127,13 +120,8 @@ def main():
                         pad=pad,
                     )
 
-            # Stage 5: draw detections + write frame to output video
-            with CUDATimer() as t_draw:
-                annotated = draw_detections(frame.copy(), det, class_names)
-                writer.write(annotated)
-
             total_ms = (t_read.elapsed_ms + t_pre.elapsed_ms +
-                        t_inf.elapsed_ms   + t_post.elapsed_ms + t_draw.elapsed_ms)
+                        t_inf.elapsed_ms   + t_post.elapsed_ms)
 
             rows.append({
                 'frame':          frame_idx,
@@ -141,7 +129,6 @@ def main():
                 'preprocess_ms':  round(t_pre.elapsed_ms,   3),
                 'inference_ms':   round(t_inf.elapsed_ms,   3),
                 'postprocess_ms': round(t_post.elapsed_ms,  3),
-                'draw_write_ms':  round(t_draw.elapsed_ms,  3),
                 'total_ms':       round(total_ms,            3),
             })
 
@@ -170,7 +157,6 @@ def main():
     print(f'End-to-end FPS   : {fps_from_mean_ms(stats["mean_ms"]):.1f}')
     print(f'{"─"*50}')
     print(f'Timings saved    : {args.results}')
-    print(f'Output video     : {args.output_video}')
 
 
 if __name__ == '__main__':

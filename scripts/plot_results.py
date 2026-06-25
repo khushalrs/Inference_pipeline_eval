@@ -60,7 +60,6 @@ STAGE_COLORS = {
     'preprocess': '#66c2a5',
     'inference':  '#fc8d62',
     'postprocess':'#e78ac3',
-    'draw_write': '#a6d854',
 }
 
 RUNTIME_COLORS = {
@@ -70,7 +69,7 @@ RUNTIME_COLORS = {
     'trt-fp16': '#dd8452',
 }
 
-PIPELINE_STAGES = ['read', 'preprocess', 'inference', 'postprocess', 'draw_write']
+PIPELINE_STAGES = ['read', 'preprocess', 'inference', 'postprocess']
 
 
 def _get_color(key: str, palette: dict) -> str:

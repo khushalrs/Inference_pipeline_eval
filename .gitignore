@@ -25,10 +25,10 @@ env/
 *.wts
 
 # Data / video files
-data/*.mp4
-data/*.avi
-data/*.mov
-data/*.mkv
+*.mp4
+*.avi
+*.mov
+*.mkv
 
 # Results and plots (downloaded manually from Colab)
 results/*.csv

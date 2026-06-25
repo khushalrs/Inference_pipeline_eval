@@ -25,7 +25,6 @@ STAGE_COLS = [
     'preprocess_ms',
     'inference_ms',
     'postprocess_ms',
-    'draw_write_ms',
     'total_ms',
 ]
 
