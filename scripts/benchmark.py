@@ -21,7 +21,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.metrics import compute_stats, fps_from_mean_ms
 
 STAGE_COLS = [
-    'read_ms',
     'preprocess_ms',
     'inference_ms',
     'postprocess_ms',
@@ -36,7 +35,9 @@ def parse_args():
     p.add_argument('--output',  default='results/pytorch_baseline.csv',
                    help='Output summary CSV path')
     p.add_argument('--runtime', default='pytorch',
-                   help='Runtime label written into the output (pytorch / onnx / trt-fp32 / trt-fp16)')
+                   help='Runtime label written into the output (pytorch / compile / onnx-cuda / trt-fp32 / trt-fp16)')
+    p.add_argument('--warmup-frames', type=int, default=20,
+                   help='Number of leading frames to discard before computing stats (default: 20)')
     return p.parse_args()
 
 
@@ -88,8 +89,14 @@ def main():
     args = parse_args()
 
     df = pd.read_csv(args.results)
-    print(f'Runtime : {args.runtime}')
-    print(f'Source  : {args.results}  ({len(df)} frames)\n')
+    print(f'Runtime        : {args.runtime}')
+    print(f'Source         : {args.results}  ({len(df)} frames total)')
+
+    if args.warmup_frames > 0:
+        df = df.iloc[args.warmup_frames:].reset_index(drop=True)
+        print(f'Warmup dropped : first {args.warmup_frames} frames excluded from stats')
+
+    print(f'Frames used    : {len(df)}\n')
 
     summary = build_summary(df, args.runtime)
     print_summary(summary)

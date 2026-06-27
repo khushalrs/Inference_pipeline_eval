@@ -63,13 +63,14 @@ STAGE_COLORS = {
 }
 
 RUNTIME_COLORS = {
-    'pytorch':  '#4c72b0',
-    'onnx':     '#55a868',
-    'trt-fp32': '#c44e52',
-    'trt-fp16': '#dd8452',
+    'pytorch':   '#4c72b0',
+    'compile':   '#8172b3',
+    'onnx-cuda': '#55a868',
+    'trt-fp32':  '#c44e52',
+    'trt-fp16':  '#dd8452',
 }
 
-PIPELINE_STAGES = ['read', 'preprocess', 'inference', 'postprocess']
+ALL_PIPELINE_STAGES = ['read', 'preprocess', 'inference', 'postprocess']
 
 
 def _get_color(key: str, palette: dict) -> str:
@@ -80,13 +81,17 @@ def _get_color(key: str, palette: dict) -> str:
 
 def plot_pipeline_breakdown(all_summaries: list[pd.DataFrame], labels: list[str], out_path: str):
     """Stacked horizontal bar: mean time per stage, one bar per runtime."""
+    # Only include stages that exist in at least one summary (read stage absent in Batch 02)
+    present_stages = [s for s in ALL_PIPELINE_STAGES
+                      if any(not df[df['stage'] == s].empty for df in all_summaries)]
+
     fig, ax = plt.subplots(figsize=(10, max(2.5, 1.2 * len(labels))))
 
     bar_h  = 0.5
     y_pos  = np.arange(len(labels))
     lefts  = np.zeros(len(labels))
 
-    for stage in PIPELINE_STAGES:
+    for stage in present_stages:
         values = []
         for df in all_summaries:
             row = df[df['stage'] == stage]
@@ -115,7 +120,7 @@ def plot_pipeline_breakdown(all_summaries: list[pd.DataFrame], labels: list[str]
 
 def plot_latency_percentiles_single(summary: pd.DataFrame, label: str, out_path: str):
     """Grouped bar of p50/p90/p99 for each pipeline stage (single runtime)."""
-    stages = [s for s in PIPELINE_STAGES if not summary[summary['stage'] == s].empty]
+    stages = [s for s in ALL_PIPELINE_STAGES if not summary[summary['stage'] == s].empty]
     x      = np.arange(len(stages))
     width  = 0.25
 
@@ -226,6 +231,8 @@ def parse_args():
                    help='Runtime labels matching --baselines order')
     p.add_argument('--output-dir',  default='plots/',
                    help='Directory to write PNG files')
+    p.add_argument('--prefix',      default='',
+                   help='Filename prefix for all output charts, e.g. "b02_" → b02_fps_comparison.png')
     return p.parse_args()
 
 
@@ -240,7 +247,7 @@ def main():
         sys.exit(1)
 
     os.makedirs(args.output_dir, exist_ok=True)
-    out = lambda name: os.path.join(args.output_dir, name)
+    out = lambda name: os.path.join(args.output_dir, f'{args.prefix}{name}')
 
     is_single = len(all_summaries) == 1
 

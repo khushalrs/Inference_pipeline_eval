@@ -1,12 +1,19 @@
-"""Phase 1 + 2: PyTorch baseline inference pipeline.
+"""Batch 02: torch.compile inference pipeline on driving video.
 
-Records per-frame latency for each pipeline stage:
-  read → preprocess → inference → postprocess (NMS + box scale)
+Mirrors run_pytorch_video.py exactly but wraps the model with torch.compile
+(mode='reduce-overhead') before the benchmark loop. This is the intermediate
+runtime between PyTorch eager and TensorRT — no export step required.
+
+torch.compile requires PyTorch >= 2.0 and a CUDA GPU.
+The first forward pass triggers compilation (included in warmup), so timed
+frames only see steady-state compiled execution.
 
 Usage:
-    python3 scripts/run_pytorch_video.py \
-        --video data/clip.mp4 \
-        --results results/pytorch_raw_timings.csv
+    python3 scripts/run_compile_video.py \
+        --video   data/clip.mp4 \
+        --results results/b02_compile_raw_timings.csv \
+        --model   yolo11n.pt \
+        --device  cuda
 """
 
 import argparse
@@ -26,23 +33,16 @@ from src.metrics import compute_stats, fps_from_mean_ms
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description='Phase 1: PyTorch baseline inference')
-    p.add_argument('--video',        default='data/clip.mp4',
-                   help='Input video path')
-    p.add_argument('--results',      default='results/pytorch_raw_timings.csv',
-                   help='Per-frame timing CSV')
-    p.add_argument('--model',        default='yolo11n.pt',
-                   help='Ultralytics model weights (downloaded automatically on first run)')
-    p.add_argument('--input-size',   type=int,   default=640,
-                   help='Square model input size')
-    p.add_argument('--conf',         type=float, default=0.25,
-                   help='Detection confidence threshold')
-    p.add_argument('--iou',          type=float, default=0.45,
-                   help='NMS IoU threshold')
-    p.add_argument('--warmup',       type=int,   default=10,
-                   help='Warmup forward passes before timing begins')
-    p.add_argument('--device',       default='cuda',
-                   help='Compute device: cuda or cpu')
+    p = argparse.ArgumentParser(description='Batch 02: torch.compile inference')
+    p.add_argument('--video',       default='data/clip.mp4')
+    p.add_argument('--results',     default='results/b02_compile_raw_timings.csv')
+    p.add_argument('--model',       default='yolo11n.pt')
+    p.add_argument('--input-size',  type=int,   default=640)
+    p.add_argument('--conf',        type=float, default=0.25)
+    p.add_argument('--iou',         type=float, default=0.45)
+    p.add_argument('--warmup',      type=int,   default=20,
+                   help='Warmup forward passes — must be enough for compile to finish (default: 20)')
+    p.add_argument('--device',      default='cuda')
     return p.parse_args()
 
 
@@ -53,8 +53,11 @@ def main():
     if device == 'cpu' and args.device == 'cuda':
         print('[WARNING] CUDA not available, falling back to CPU')
 
-    input_shape = (args.input_size, args.input_size)
+    if not hasattr(torch, 'compile'):
+        print('[ERROR] torch.compile requires PyTorch >= 2.0')
+        sys.exit(1)
 
+    input_shape = (args.input_size, args.input_size)
     os.makedirs(os.path.dirname(os.path.abspath(args.results)), exist_ok=True)
 
     # ── Model ────────────────────────────────────────────────────────────────
@@ -64,21 +67,25 @@ def main():
     yolo  = YOLO(args.model)
     model = yolo.model.to(device).eval()
 
+    print('Compiling model with torch.compile(mode="reduce-overhead") ...')
+    model = torch.compile(model, mode='reduce-overhead')
+
     if device == 'cuda':
         print(f'GPU         : {torch.cuda.get_device_name(0)}')
-        print(f'CUDA version: {torch.version.cuda}')
+        print(f'PyTorch     : {torch.__version__}')
 
-    # ── Warmup ───────────────────────────────────────────────────────────────
-    print(f'Warming up ({args.warmup} iterations) ...')
+    # ── Warmup (first call triggers compilation — must be inside warmup) ─────
+    print(f'Warming up ({args.warmup} iterations — includes compile on first pass) ...')
     dummy = torch.zeros(1, 3, *input_shape, device=device)
     with torch.no_grad():
         for _ in range(args.warmup):
             _ = model(dummy)
     if device == 'cuda':
         torch.cuda.synchronize()
+    print('Warmup complete.\n')
 
-    # ── Pre-buffer frames (decouples I/O from inference timing) ─────────────
-    print(f'\nVideo       : {args.video}')
+    # ── Pre-buffer frames ────────────────────────────────────────────────────
+    print(f'Video       : {args.video}')
     frame_buffer, src_fps, src_w, src_h = load_frames(args.video)
     n_frames = len(frame_buffer)
     print()
@@ -88,19 +95,16 @@ def main():
 
     for frame_idx, frame in enumerate(frame_buffer):
 
-        # Stage 1: letterbox resize + BGR→RGB + move to GPU
         with CUDATimer() as t_pre:
             img_lb, ratio, pad = letterbox(frame, input_shape)
             tensor = to_tensor(img_lb, device)
 
-        # Stage 2: model forward pass
         with CUDATimer() as t_inf:
             with torch.no_grad():
                 raw_preds = model(tensor)
                 if isinstance(raw_preds, (list, tuple)):
                     raw_preds = raw_preds[0]
 
-        # Stage 3: NMS + scale boxes to original frame coords
         with CUDATimer() as t_post:
             dets = run_nms(raw_preds, args.conf, args.iou)
             det  = dets[0]
@@ -135,7 +139,6 @@ def main():
         w.writeheader()
         w.writerows(rows)
 
-    # ── Summary (exclude warmup frames from printed stats) ───────────────────
     total_times = [r['total_ms'] for r in rows[args.warmup:]]
     stats       = compute_stats(total_times)
 
