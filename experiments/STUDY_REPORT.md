@@ -172,4 +172,91 @@ At 8.3 ms total and 120+ FPS, TensorRT comfortably handles real-time automotive 
 
 ---
 
+## 8. Experiment Roadmap — Batch 03 → 07
+
+Each batch builds on the previous one and tells a coherent story for an inference engineering portfolio.
+
+---
+
+### Batch 03 — Precision Ladder + CUDA Streams Overlap
+**Theme: "I know how to squeeze every millisecond out of a GPU"**
+
+| Sub-experiment | What | Expected Outcome |
+|---|---|---|
+| **3A — TRT INT8** | Build INT8 engine with calibration dataset (500 dashcam frames). Run same benchmark as B02. | ~2.5–3 ms inference, ~1–4% mAP drop vs FP32 |
+| **3B — CUDA Streams** | 3-stream async pipeline: H→D transfer / inference / D→H+NMS overlapped across consecutive frames | 30–40% throughput gain over serialised pipeline |
+| **3C — Precision table** | Single comparison: FP32 → FP16 → INT8 across latency, mAP, model size, GPU memory | Centrepiece visualisation of the whole study |
+
+**New scripts needed:** `scripts/build_tensorrt_engine_int8.py`, `scripts/extract_calibration_frames.py`, `scripts/run_cuda_streams_video.py`
+
+---
+
+### Batch 04 — Realistic System: Streaming Pipeline + Object Tracking
+**Theme: "I can build a production-grade perception system, not just run a model"**
+
+| Sub-experiment | What | Expected Outcome |
+|---|---|---|
+| **4A — Producer-consumer pipeline** | Reader thread → bounded queue → inference thread → results thread. Metrics: queue depth, frame drop rate, end-to-end latency | Shows which runtimes sustain real-time at 30/60/120 FPS input |
+| **4B — ByteTrack integration** | Add ByteTrack after NMS for all 5 runtimes. Metrics: tracking overhead (ms), HOTA, ID switches per 1000 frames | Faster runtime = fewer dropped frames = more stable tracks |
+
+**New scripts needed:** `scripts/run_streaming_pipeline.py`, `scripts/run_tracking_video.py`
+
+**Dependencies:** `pip install lapx` (ByteTrack dependency; Ultralytics includes ByteTrack natively)
+
+---
+
+### Batch 05 — Accuracy Meets Latency: The Real Engineering Tradeoff
+**Theme: "I measure what actually matters in deployment, not just speed"**
+
+| Sub-experiment | What | Expected Outcome |
+|---|---|---|
+| **5A — mAP vs latency Pareto curve** | Evaluate all runtimes on labelled BDD100K subset. Plot latency vs mAP for every runtime+precision combo | Single plot that tells the whole story |
+| **5B — Confidence threshold sweep** | Sweep conf=0.1→0.9 on TRT FP16. Measure NMS cost, mAP, FPS simultaneously | Optimal conf for minimising false positives without FPS penalty |
+| **5C — Model size sweep** | YOLO11n / 11s / 11m all at TRT FP16 | "Which model should we deploy" decision chart |
+
+**New scripts needed:** `scripts/eval_map.py`, `scripts/run_conf_sweep.py`
+
+**Dependencies:** ground truth labels from [BDD100K](https://bdd-data.berkeley.edu/) or [KITTI](https://www.cvlibs.net/datasets/kitti/)
+
+---
+
+### Batch 06 — Multi-Task Model: One Backbone, Three Outputs
+**Theme: "I understand how real AV perception systems are designed"**
+
+| Sub-experiment | What | Expected Outcome |
+|---|---|---|
+| **6A — HybridNets or YOLOP on TRT FP16** | Detection + drivable area segmentation + lane detection in one forward pass | Shared backbone (~5 ms) << 3 separate models (~24 ms) |
+| **6B — Per-head latency breakdown** | Time each output head separately | Shows where multi-task cost actually lives |
+
+**Dependencies:** [HybridNets](https://github.com/datvuthanh/HybridNets) or [YOLOP](https://github.com/hustvl/YOLOP) (both open source, exportable to ONNX/TRT)
+
+---
+
+### Batch 07 (Stretch) — Production Serving with Triton
+**Theme: "I know what happens after the model is fast"**
+
+| Sub-experiment | What | Expected Outcome |
+|---|---|---|
+| **7A — Triton backend** | Deploy YOLO11n TRT FP16 as Triton model. gRPC client sends frames | Serving overhead vs direct TRT (~1–3 ms per frame) |
+| **7B — Dynamic batching** | Enable Triton's dynamic batcher. Measure throughput at various concurrency levels | Batching benefit at the serving layer |
+| **7C — Metrics** | Scrape Triton Prometheus endpoint. Plot GPU utilisation, queue time, batch size distribution | Production observability |
+
+**Dependencies:** `docker pull nvcr.io/nvidia/tritonserver`
+
+---
+
+## Portfolio Arc
+
+```
+Batch 01  Naive baseline                   →  "I identified measurement flaws"
+Batch 02  Fixed methodology                →  "I fixed them and got clean numbers"
+Batch 03  Precision ladder + CUDA Streams  →  "I optimised at the GPU level"
+Batch 04  Streaming pipeline + tracking    →  "I built a realistic system"
+Batch 05  Accuracy-latency tradeoffs       →  "I measured what actually matters"
+Batch 06  Multi-task model                 →  "I understand AV architecture"
+Batch 07  Triton production serving        →  "I know production deployment"
+```
+
+---
+
 *All experiments run on Google Colab T4 GPU · YOLO11n COCO weights · June 2025*
