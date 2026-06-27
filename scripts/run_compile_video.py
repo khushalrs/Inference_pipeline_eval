@@ -1,12 +1,12 @@
-"""Batch 02: torch.compile (reduce-overhead) inference pipeline on driving video.
+"""Batch 02: torch.compile (default mode) inference pipeline on driving video.
 
-Compiles the YOLO11n backbone+neck with mode='reduce-overhead' (CUDA Graphs)
-for maximum kernel launch savings. The Detect head runs in eager mode because
-it mutates self.anchors/self.strides on every forward pass, which is
-incompatible with CUDA Graph static memory requirements.
-
-Split: model.model[:-1] → compiled backbone (CUDA Graphs)
-       model.model[-1]  → Detect head (eager, ~0.1ms, not the bottleneck)
+Compiles the full YOLO11n model with mode='default' (TorchInductor kernel fusion).
+reduce-overhead/CUDA Graphs is incompatible with YOLO11n because:
+  1. The Detect head mutates self.anchors/self.strides on every forward pass.
+  2. The FPN/PAN neck uses skip connections managed by _predict_once routing,
+     so model.model[:-1] cannot be called as a standalone Sequential.
+mode='default' still provides measurable speedup via kernel fusion without
+requiring static tensor memory addresses.
 
 torch.compile requires PyTorch >= 2.0 and a CUDA GPU.
 
@@ -69,23 +69,22 @@ def main():
     yolo       = YOLO(args.model)
     full_model = yolo.model.to(device).eval()
 
-    # Compile backbone+neck only — the Detect head (last module) mutates
-    # self.anchors/self.strides each forward pass, incompatible with CUDA Graphs.
-    backbone = torch.compile(full_model.model[:-1], mode='reduce-overhead')
-    head     = full_model.model[-1]
+    # Compile full model — mode='default' uses TorchInductor kernel fusion.
+    # reduce-overhead is incompatible: YOLO11n's anchor mutation and FPN skip
+    # connections require dynamic tensor routing that CUDA Graphs cannot capture.
+    model = torch.compile(full_model, mode='default')
 
     if device == 'cuda':
         print(f'GPU         : {torch.cuda.get_device_name(0)}')
         print(f'PyTorch     : {torch.__version__}')
-    print('Backbone compiled with reduce-overhead (CUDA Graphs). Head runs in eager.')
+    print('Model compiled with mode=default (TorchInductor kernel fusion).')
 
     # ── Warmup ───────────────────────────────────────────────────────────────
-    print(f'Warming up ({args.warmup} iterations — CUDA Graph capture on first pass) ...')
+    print(f'Warming up ({args.warmup} iterations — compilation on first pass) ...')
     dummy = torch.zeros(1, 3, *input_shape, device=device)
     with torch.no_grad():
         for _ in range(args.warmup):
-            features  = backbone(dummy)
-            _         = head(features)
+            _ = model(dummy)
     if device == 'cuda':
         torch.cuda.synchronize()
     print('Warmup complete.\n')
@@ -106,8 +105,7 @@ def main():
 
         with CUDATimer() as t_inf:
             with torch.no_grad():
-                features  = backbone(tensor)
-                raw_preds = head(features)
+                raw_preds = model(tensor)
                 if isinstance(raw_preds, (list, tuple)):
                     raw_preds = raw_preds[0]
 
