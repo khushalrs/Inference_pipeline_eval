@@ -27,13 +27,22 @@ class VideoReader:
         self.release()
 
 
-def load_frames(path: str) -> tuple:
-    """Decode all frames from a video file into a list of numpy arrays.
+def load_frames(path: str, input_shape: tuple = None) -> tuple:
+    """Decode all frames into RAM, optionally letterboxing during buffering.
 
-    Returns (frames, fps, width, height) where frames is a list of BGR uint8
-    arrays. Call this once before the benchmark loop so disk I/O is excluded
-    from inference timing — mirrors how a real camera streams into RAM.
+    Args:
+        path:        Video file path.
+        input_shape: If given (H, W), each frame is letterboxed to this size
+                     before storing. Reduces memory from ~60 GB (raw 4K) to
+                     ~3 GB (640×640) — required for Colab when source is 4K.
+
+    Returns:
+        frames:  list of (letterboxed BGR uint8 ndarray, pad) if input_shape
+                 given, else list of raw BGR uint8 ndarrays.
+        fps, width, height: source video metadata.
     """
+    import sys
+
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise FileNotFoundError(f"Cannot open video: {path}")
@@ -43,16 +52,31 @@ def load_frames(path: str) -> tuple:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total  = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+    if input_shape is not None:
+        from src.preprocessing import letterbox as _letterbox
+        print(f'Pre-buffering {total} frames with letterbox → {input_shape} '
+              f'(source {width}x{height} @ {fps:.1f} FPS) ...')
+        stored_mb = total * input_shape[0] * input_shape[1] * 3 / 1e6
+    else:
+        print(f'Pre-buffering {total} frames at full resolution '
+              f'({width}x{height} @ {fps:.1f} FPS) ...')
+        stored_mb = total * width * height * 3 / 1e6
+
+    print(f'Estimated buffer size: {stored_mb:.0f} MB')
+
     frames = []
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        frames.append(frame)
+        if input_shape is not None:
+            lb, ratio, pad = _letterbox(frame, input_shape)
+            frames.append((lb, pad))
+        else:
+            frames.append(frame)
     cap.release()
 
-    print(f'Pre-buffered {len(frames)}/{total} frames '
-          f'({width}x{height} @ {fps:.1f} FPS) into RAM — I/O decoupled from inference loop.')
+    print(f'Pre-buffered {len(frames)}/{total} frames — I/O decoupled from inference loop.\n')
     return frames, fps, width, height
 
 

@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.timing import CUDATimer
 from src.video_io import load_frames
-from src.preprocessing import letterbox, to_tensor
+from src.preprocessing import to_tensor
 from src.postprocessing import run_nms, scale_boxes
 from src.metrics import compute_stats, fps_from_mean_ms
 
@@ -77,20 +77,18 @@ def main():
     if device == 'cuda':
         torch.cuda.synchronize()
 
-    # ── Pre-buffer frames (decouples I/O from inference timing) ─────────────
+    # ── Pre-buffer frames with letterbox (keeps RAM under ~3 GB for 4K source)
     print(f'\nVideo       : {args.video}')
-    frame_buffer, src_fps, src_w, src_h = load_frames(args.video)
+    frame_buffer, src_fps, src_w, src_h = load_frames(args.video, input_shape=input_shape)
     n_frames = len(frame_buffer)
-    print()
 
     FIELDS = ['frame', 'preprocess_ms', 'inference_ms', 'postprocess_ms', 'total_ms']
     rows = []
 
-    for frame_idx, frame in enumerate(frame_buffer):
+    for frame_idx, (img_lb, pad) in enumerate(frame_buffer):
 
-        # Stage 1: letterbox resize + BGR→RGB + move to GPU
+        # Stage 1: BGR→RGB + normalize + move to GPU (letterbox already done during buffering)
         with CUDATimer() as t_pre:
-            img_lb, ratio, pad = letterbox(frame, input_shape)
             tensor = to_tensor(img_lb, device)
 
         # Stage 2: model forward pass
