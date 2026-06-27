@@ -79,6 +79,7 @@ def main():
     dummy = torch.zeros(1, 3, *input_shape, device=device)
     with torch.no_grad():
         for _ in range(args.warmup):
+            torch.compiler.cudagraph_mark_step_begin()
             _ = model(dummy)
     if device == 'cuda':
         torch.cuda.synchronize()
