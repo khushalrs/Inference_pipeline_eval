@@ -1,0 +1,5 @@
+runtime,stage,count,mean_ms,std_ms,min_ms,p50_ms,p90_ms,p99_ms,max_ms
+compile,preprocess,2496,2.547,0.309,2.321,2.441,2.833,3.654,7.519
+compile,inference,2496,7.593,1.751,6.394,6.751,9.756,13.923,17.713
+compile,postprocess,2496,1.587,1.163,0.219,1.513,2.03,2.814,54.437
+compile,total,2496,11.727,2.51,9.07,10.7,14.66,19.716,64.391

@@ -1,0 +1,5 @@
+runtime,stage,count,mean_ms,std_ms,min_ms,p50_ms,p90_ms,p99_ms,max_ms
+onnx-cuda,preprocess,2496,2.258,0.285,1.768,2.252,2.513,3.098,5.647
+onnx-cuda,inference,2496,7.847,0.756,7.144,7.576,8.714,10.946,15.131
+onnx-cuda,postprocess,2496,2.167,0.518,1.167,2.019,2.867,3.613,5.302
+onnx-cuda,total,2496,12.273,1.334,10.146,11.901,13.912,16.97,22.135
