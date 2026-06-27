@@ -1,12 +1,14 @@
-"""Batch 02: torch.compile inference pipeline on driving video.
+"""Batch 02: torch.compile (reduce-overhead) inference pipeline on driving video.
 
-Mirrors run_pytorch_video.py exactly but wraps the model with torch.compile
-(mode='reduce-overhead') before the benchmark loop. This is the intermediate
-runtime between PyTorch eager and TensorRT — no export step required.
+Compiles the YOLO11n backbone+neck with mode='reduce-overhead' (CUDA Graphs)
+for maximum kernel launch savings. The Detect head runs in eager mode because
+it mutates self.anchors/self.strides on every forward pass, which is
+incompatible with CUDA Graph static memory requirements.
+
+Split: model.model[:-1] → compiled backbone (CUDA Graphs)
+       model.model[-1]  → Detect head (eager, ~0.1ms, not the bottleneck)
 
 torch.compile requires PyTorch >= 2.0 and a CUDA GPU.
-The first forward pass triggers compilation (included in warmup), so timed
-frames only see steady-state compiled execution.
 
 Usage:
     python3 scripts/run_compile_video.py \
@@ -64,23 +66,26 @@ def main():
     print(f'Device      : {device}')
     print(f'Loading     : {args.model}')
     from ultralytics import YOLO
-    yolo  = YOLO(args.model)
-    model = yolo.model.to(device).eval()
+    yolo       = YOLO(args.model)
+    full_model = yolo.model.to(device).eval()
 
-    print('Compiling model with torch.compile(mode="reduce-overhead") ...')
-    model = torch.compile(model, mode='reduce-overhead')
+    # Compile backbone+neck only — the Detect head (last module) mutates
+    # self.anchors/self.strides each forward pass, incompatible with CUDA Graphs.
+    backbone = torch.compile(full_model.model[:-1], mode='reduce-overhead')
+    head     = full_model.model[-1]
 
     if device == 'cuda':
         print(f'GPU         : {torch.cuda.get_device_name(0)}')
         print(f'PyTorch     : {torch.__version__}')
+    print('Backbone compiled with reduce-overhead (CUDA Graphs). Head runs in eager.')
 
-    # ── Warmup (first call triggers compilation — must be inside warmup) ─────
-    print(f'Warming up ({args.warmup} iterations — includes compile on first pass) ...')
+    # ── Warmup ───────────────────────────────────────────────────────────────
+    print(f'Warming up ({args.warmup} iterations — CUDA Graph capture on first pass) ...')
     dummy = torch.zeros(1, 3, *input_shape, device=device)
     with torch.no_grad():
         for _ in range(args.warmup):
-            torch.compiler.cudagraph_mark_step_begin()
-            _ = model(dummy)
+            features  = backbone(dummy)
+            _         = head(features)
     if device == 'cuda':
         torch.cuda.synchronize()
     print('Warmup complete.\n')
@@ -101,8 +106,8 @@ def main():
 
         with CUDATimer() as t_inf:
             with torch.no_grad():
-                torch.compiler.cudagraph_mark_step_begin()
-                raw_preds = model(tensor)
+                features  = backbone(tensor)
+                raw_preds = head(features)
                 if isinstance(raw_preds, (list, tuple)):
                     raw_preds = raw_preds[0]
 
