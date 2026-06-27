@@ -105,7 +105,7 @@ def plot_pipeline_breakdown(all_summaries: list[pd.DataFrame], labels: list[str]
     ax.set_yticklabels(labels)
     ax.set_xlabel('Mean latency (ms)')
     ax.set_title('Pipeline Stage Breakdown — Mean Latency per Runtime')
-    ax.legend(loc='lower right', ncol=len(PIPELINE_STAGES), fontsize=8)
+    ax.legend(loc='lower right', ncol=len(present_stages), fontsize=8)
 
     # Annotate total
     for i, (left, label) in enumerate(zip(lefts, labels)):
