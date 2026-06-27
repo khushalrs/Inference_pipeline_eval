@@ -100,6 +100,7 @@ def main():
 
         with CUDATimer() as t_inf:
             with torch.no_grad():
+                torch.compiler.cudagraph_mark_step_begin()
                 raw_preds = model(tensor)
                 if isinstance(raw_preds, (list, tuple)):
                     raw_preds = raw_preds[0]
